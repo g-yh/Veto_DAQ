@@ -1,0 +1,13 @@
+all_boards_config:
+  seq_chk: 1
+  head_length: 7
+  data_length: 57
+  event_number: 1000
+
+board_config:
+  - name: "brd_1"
+    ip: 192.168.31.101
+    enable: 1
+  - name: "brd_2"
+    ip: 192.168.31.102
+    enable: 1
