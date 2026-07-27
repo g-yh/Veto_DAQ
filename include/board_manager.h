@@ -28,6 +28,16 @@ class BoardManager {
 
     std::size_t boardCount() const { return boards_.size(); }
 
+    std::shared_ptr<RingBuffer> ringBuffer() const { return ring_buffer_; }
+
+    std::string commonStr(const std::string &key,
+                          const std::string &default_val) const {
+        if (common_node_ && common_node_[key]) {
+            return common_node_[key].as<std::string>();
+        }
+        return default_val;
+    }
+
   private:
     asio::io_context &io_context_;
     YAML::Node common_node_;

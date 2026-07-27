@@ -52,7 +52,14 @@ class VetoBoardClient : public std::enable_shared_from_this<VetoBoardClient> {
     void disconnect();
     bool connected() const;
 
-    void receiveEvents();
+    void startReceiving();
+    void stopReceiving();
+    void stopReceivingSync();
+    bool isReceiving() const { return receiving_.load(); }
+
+    ConnState connState() const { return conn_state_.load(); }
+    const std::string &ip() const { return server_ip_; }
+    uint16_t port() const { return server_port_; }
 
     const std::string &name() const { return name_; }
 
@@ -93,6 +100,9 @@ class VetoBoardClient : public std::enable_shared_from_this<VetoBoardClient> {
     size_t event_number_ = 1000;
     size_t events_received_ = 0;
     std::vector<std::byte> recv_buffer_;
+
+    // receive control
+    std::atomic<bool> receiving_{false};
 
     // continuity check
     bool seq_chk_ = false;

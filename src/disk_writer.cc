@@ -2,6 +2,7 @@
 #include "daq_log.h"
 
 #include <ctime>
+#include <iomanip>
 #include <sstream>
 
 namespace veto {
@@ -28,6 +29,7 @@ bool DiskWriter::start() {
     DAQLog::getInstance().getDefaultLogger()->info(
         "DiskWriter: writing to {}", filepath_);
 
+    stop_requested_.store(false);
     running_.store(true);
     file_open_time_ = std::chrono::steady_clock::now();
     bytes_written_this_file_ = 0;
@@ -39,13 +41,24 @@ void DiskWriter::stop() {
     if (!running_.load()) {
         return;
     }
-    running_.store(false);
+    stop_requested_.store(true, std::memory_order_release);
+    cv_.notify_one();
+
+    while (ring_buffer_.available() > 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
     if (writer_thread_.joinable()) {
         writer_thread_.join();
     }
+    running_.store(false);
     file_writer_.close();
-    DAQLog::getInstance().getDefaultLogger()->info(
-        "DiskWriter stopped, total {} bytes written", bytes_written_.load());
+}
+
+void DiskWriter::waitForFinish() {
+    if (writer_thread_.joinable()) {
+        writer_thread_.join();
+    }
 }
 
 void DiskWriter::rotate() {
@@ -70,10 +83,17 @@ void DiskWriter::rotate() {
 void DiskWriter::writerLoop() {
     std::array<std::byte, 65536> buf;
 
-    while (running_.load()) {
+    while (true) {
         auto avail = ring_buffer_.available();
         if (avail == 0) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            if (stop_requested_.load(std::memory_order_acquire)) {
+                break;
+            }
+            {
+                std::unique_lock<std::mutex> lock(cv_mtx_);
+                cv_.wait_for(lock, std::chrono::milliseconds(10),
+                             [this] { return stop_requested_.load(std::memory_order_acquire); });
+            }
             continue;
         }
 
@@ -91,13 +111,11 @@ void DiskWriter::writerLoop() {
         bytes_written_this_file_ += to_read;
         bytes_written_.fetch_add(to_read);
 
-        // rotation by size
         if (rotation_size_ > 0 &&
             bytes_written_this_file_ >= rotation_size_) {
             rotate();
         }
 
-        // rotation by duration
         if (rotation_duration_ > 0) {
             auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
                 std::chrono::steady_clock::now() - file_open_time_);
@@ -107,6 +125,9 @@ void DiskWriter::writerLoop() {
         }
     }
 
+    DAQLog::getInstance().getDefaultLogger()->info(
+        "DiskWriter: writer loop finished");
+    running_.store(false);
     file_writer_.close();
 }
 

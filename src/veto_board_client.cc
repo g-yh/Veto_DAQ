@@ -2,6 +2,7 @@
 #include "daq_log.h"
 
 #include <cstring>
+#include <endian.h>
 
 namespace veto {
 
@@ -84,7 +85,7 @@ void VetoBoardClient::handleConnect(const asio::error_code &ec,
     });
 }
 
-void VetoBoardClient::receiveEvents() {
+void VetoBoardClient::startReceiving() {
     asio::post(strand_, [this, self = shared_from_this()]() {
         if (conn_state_.load() != ConnState::Connected) {
             DAQLog::getInstance().getDefaultLogger()->warn(
@@ -92,15 +93,29 @@ void VetoBoardClient::receiveEvents() {
             return;
         }
 
+        receiving_.store(true);
         events_received_ = 0;
         recv_buffer_.clear();
 
         DAQLog::getInstance().getDefaultLogger()->info(
-            "[{}] start receiving {} events (head={} data={} event_size={})",
-            name_, event_number_, head_length_, data_length_, event_size_);
+            "[{}] start continuous receiving", name_);
 
         doReceiveEvents();
     });
+}
+
+void VetoBoardClient::stopReceiving() {
+    receiving_.store(false);
+    asio::post(strand_, [this, self = shared_from_this()]() {
+        asio::error_code ec;
+        socket_.cancel(ec);
+    });
+}
+
+void VetoBoardClient::stopReceivingSync() {
+    receiving_.store(false);
+    asio::error_code ec;
+    socket_.close(ec);
 }
 
 void VetoBoardClient::doReceiveEvents() {
@@ -124,7 +139,7 @@ void VetoBoardClient::doReceiveEvents() {
                                     static_cast<std::ptrdiff_t>(length));
 
             while (recv_buffer_.size() >= event_size_ &&
-                   events_received_ < event_number_) {
+                   receiving_.load()) {
 
                 BoardEventHeader hdr;
                 if (!parseEvent(recv_buffer_.data(), hdr)) {
@@ -150,9 +165,9 @@ void VetoBoardClient::doReceiveEvents() {
                 events_received_++;
             }
 
-            if (events_received_ >= event_number_) {
+            if (!receiving_.load()) {
                 DAQLog::getInstance().getDefaultLogger()->info(
-                    "[{}] received {} events, batch complete", name_,
+                    "[{}] receiving stopped, {} events received", name_,
                     events_received_);
                 return;
             }
@@ -164,6 +179,9 @@ void VetoBoardClient::doReceiveEvents() {
 bool VetoBoardClient::parseEvent(const std::byte *raw,
                                  BoardEventHeader &hdr) {
     std::memcpy(&hdr, raw, sizeof(BoardEventHeader));
+    hdr.trig_id = be32toh(hdr.trig_id);
+    hdr.channel_num = be16toh(hdr.channel_num);
+    hdr.tdc_bin = be16toh(hdr.tdc_bin);
     return true;
 }
 
@@ -189,8 +207,8 @@ bool VetoBoardClient::checkContinuity(uint16_t channel_num,
 void VetoBoardClient::disconnect() {
     asio::post(strand_, [self = shared_from_this()]() {
         auto expected = ConnState::Connected;
-        if (!conn_state_.compare_exchange_strong(expected,
-                                                 ConnState::Disconnecting)) {
+        if (!self->conn_state_.compare_exchange_strong(
+                expected, ConnState::Disconnecting)) {
             return;
         }
         self->handleDisconnect();

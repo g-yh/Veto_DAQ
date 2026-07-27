@@ -2,8 +2,10 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <mutex>
 #include <string>
 #include <thread>
 
@@ -24,6 +26,7 @@ class DiskWriter {
 
     bool start();
     void stop();
+    void waitForFinish();
     bool running() const { return running_.load(); }
 
     uint64_t totalBytesWritten() const { return bytes_written_.load(); }
@@ -38,12 +41,16 @@ class DiskWriter {
 
     std::string filepath_;
     std::atomic<bool> running_{false};
+    std::atomic<bool> stop_requested_{false};
 
     std::chrono::steady_clock::time_point file_open_time_;
     uint32_t rotation_duration_ = 0;
     uint64_t rotation_size_ = 0;
     uint64_t bytes_written_this_file_ = 0;
     std::atomic<uint64_t> bytes_written_{0};
+
+    std::mutex cv_mtx_;
+    std::condition_variable cv_;
 };
 
 } // namespace veto

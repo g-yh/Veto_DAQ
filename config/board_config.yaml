@@ -3,11 +3,10 @@ all_boards_config:
   head_length: 7
   data_length: 57
   event_number: 1000
+  output_path: "veto_data.bin"
 
 board_config:
-  - name: "brd_1"
-    ip: 192.168.31.101
-    enable: 1
-  - name: "brd_2"
-    ip: 192.168.31.102
+  - name: "test_board"
+    ip: 127.0.0.1
+    port: 12345
     enable: 1
